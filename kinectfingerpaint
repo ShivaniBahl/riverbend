@@ -1,0 +1,172 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
+using System.Windows.Shapes;
+
+using Microsoft.Kinect;
+using System.IO;
+using System.Media;
+
+
+namespace KinectFingerPaint
+{
+    /// <summary>
+    /// Interaction logic for MainWindow.xaml
+    /// </summary>
+    public partial class MainWindow : Window
+    {
+        KinectSensor myKinect;
+
+        public MainWindow()
+        {
+            InitializeComponent();
+        }
+
+        #region Drawing code
+
+        #region Finger Paint image
+
+        // Image Size
+        const int fingerPaintImageWidth = 640;
+        const int fingerPaintImageHeight = 480;
+
+        const int fingerPaintImageByteSize = fingerPaintImageHeight * fingerPaintImageWidth * 4;
+
+        // Image buffer
+        byte[] fingerPaintImageBytes = new byte[fingerPaintImageByteSize];
+
+        // Draw helper
+        WriteableBitmap fingerPaintBitmap = null;
+
+        #endregion
+
+        void clearFingerPaintImage(byte blue, byte green, byte red, byte alpha)
+        {
+            int clearPos = 0;
+
+            while (clearPos < fingerPaintImageByteSize)
+            {
+                fingerPaintImageBytes[clearPos] = blue;
+                clearPos++;
+                fingerPaintImageBytes[clearPos] = green;
+                clearPos++;
+                fingerPaintImageBytes[clearPos] = red;
+                clearPos++;
+                fingerPaintImageBytes[clearPos] = alpha;
+                clearPos++;
+            }
+        }
+
+        void drawFingerPaintPixel(int drawPos, byte blue, byte green, byte red, byte alpha)
+        {
+            fingerPaintImageBytes[drawPos] = blue;
+            drawPos++;
+            fingerPaintImageBytes[drawPos] = green;
+            drawPos++;
+            fingerPaintImageBytes[drawPos] = red;
+            drawPos++;
+            fingerPaintImageBytes[drawPos] = alpha;
+        }
+
+        int fingerDrawDistance = 1000;
+
+        byte greenPen = 0;
+        byte bluePen = 0;
+        byte redPen = 255;
+        byte alphaPen = 255;
+
+        void fingerPaint(short [] depthData, int width)
+        {
+            int depthWidthBytes = width * 2;
+
+            for (int depthPos = 0; depthPos < depthData.Length; depthPos++)
+            {
+                int depthValue = depthData[depthPos] >> 3;
+
+                if (depthValue == myKinect.DepthStream.UnknownDepth ||
+                    depthValue == myKinect.DepthStream.TooFarDepth ||
+                    depthValue == myKinect.DepthStream.TooNearDepth)
+                {
+                    continue;
+                }
+
+                if (depthValue < fingerDrawDistance)
+                {
+                    drawFingerPaintPixel(depthPos * 4, bluePen, greenPen, redPen, alphaPen);
+                }
+            }
+
+            if (fingerPaintBitmap == null)
+            {
+                fingerPaintBitmap = new WriteableBitmap(
+                    fingerPaintImageWidth,
+                    fingerPaintImageHeight,
+                    96,  // DpiX
+                    96,  // DpiY
+                    PixelFormats.Bgr32,
+                    null);
+                fingerPaintImage.Source = fingerPaintBitmap;
+            }
+
+            fingerPaintBitmap.WritePixels(
+                new Int32Rect(0, 0, fingerPaintImageWidth, fingerPaintImageHeight),
+                fingerPaintImageBytes, // video data
+                fingerPaintImageWidth * 4, // stride,
+                0   // offset into the array - start at 0
+                );
+        }
+
+        #endregion
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (KinectSensor.KinectSensors.Count == 0)
+            {
+                MessageBox.Show("No Kinects detected", "Camera Viewer");
+                Application.Current.Shutdown();
+            }
+
+            try
+            {
+                myKinect = KinectSensor.KinectSensors[0];
+
+                myKinect.DepthStream.Enable();
+
+                myKinect.Start();
+
+                myKinect.DepthFrameReady += new EventHandler<DepthImageFrameReadyEventArgs>(myKinect_DepthFrameReady);
+            }
+            catch
+            {
+                MessageBox.Show("Kinect initialise failed", "Depth Viewer");
+                Application.Current.Shutdown();
+            }
+        }
+
+        short[] depthData = null;
+
+        void myKinect_DepthFrameReady(object sender, DepthImageFrameReadyEventArgs e)
+        {
+            using (DepthImageFrame depthFrame = e.OpenDepthImageFrame())
+            {
+                if (depthFrame == null) return;
+
+                if (depthData == null)
+                    depthData = new short[depthFrame.PixelDataLength];
+
+                depthFrame.CopyPixelDataTo(depthData);
+
+                fingerPaint(depthData, depthFrame.Width);
+            }
+        }
+    }
+}
